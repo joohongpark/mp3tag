@@ -23,11 +23,7 @@ impl SpotifyConfig {
 }
 
 fn config_path() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    PathBuf::from(home)
-        .join(".config")
-        .join("mp3tag")
-        .join("config.toml")
+    PathBuf::from("config.toml")
 }
 
 pub fn load_config() -> Config {
@@ -43,9 +39,6 @@ pub fn load_config() -> Config {
 
 pub fn save_config(config: &Config) -> Result<()> {
     let path = config_path();
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
     let content = toml::to_string_pretty(config)?;
     std::fs::write(&path, content)?;
     Ok(())
