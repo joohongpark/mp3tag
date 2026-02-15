@@ -50,9 +50,9 @@ pub struct Mp3TagApp {
 }
 
 impl Mp3TagApp {
-    /// 앱을 초기화한다. 한글 폰트를 로드하고, directory가 주어지면 스캔을 시작한다.
+    /// 앱을 초기화한다. 폰트를 로드하고, directory가 주어지면 스캔을 시작한다.
     pub fn new(cc: &eframe::CreationContext<'_>, directory: Option<PathBuf>) -> Self {
-        Self::setup_korean_fonts(&cc.egui_ctx);
+        Self::setup_fonts(&cc.egui_ctx);
         let (tx, rx) = mpsc::channel();
 
         let dir_path = directory
@@ -89,45 +89,62 @@ impl Mp3TagApp {
         app
     }
 
-    /// 시스템에서 한글 폰트를 찾아 egui에 등록한다.
-    fn setup_korean_fonts(ctx: &egui::Context) {
+    /// 시스템에서 폰트를 찾아 egui에 등록한다.
+    /// 폴백 순서: egui 기본(라틴) → CJK 폰트(한중일) → 유니코드 폰트(기타 문자)
+    fn setup_fonts(ctx: &egui::Context) {
         let mut fonts = egui::FontDefinitions::default();
 
-        // macOS 시스템 한글 폰트 경로들
-        let font_paths = [
+        // CJK 폰트 경로들 (한중일 문자 지원)
+        let cjk_font_paths = [
             "/System/Library/Fonts/AppleSDGothicNeo.ttc",
             "/System/Library/Fonts/Supplemental/AppleGothic.ttf",
-            // 리눅스
             "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
             "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
             "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
         ];
 
-        for path in &font_paths {
+        // 다국어 유니코드 폰트 경로들 (태국어, 아랍어, 데바나가리 등)
+        let unicode_font_paths = [
+            "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+            "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+            "/usr/share/fonts/noto/NotoSans-Regular.ttf",
+        ];
+
+        // CJK 폰트 등록 (첫 번째로 찾은 폰트 사용)
+        for path in &cjk_font_paths {
             if let Ok(font_data) = std::fs::read(path) {
                 fonts.font_data.insert(
-                    "korean_font".to_string(),
+                    "cjk_font".to_string(),
                     egui::FontData::from_owned(font_data),
                 );
-
-                // 기본 폰트 패밀리에 한글 폰트 추가
-                if let Some(family) = fonts
-                    .families
-                    .get_mut(&egui::FontFamily::Proportional)
-                {
-                    family.push("korean_font".to_string());
+                if let Some(family) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
+                    family.push("cjk_font".to_string());
                 }
-                if let Some(family) = fonts
-                    .families
-                    .get_mut(&egui::FontFamily::Monospace)
-                {
-                    family.push("korean_font".to_string());
+                if let Some(family) = fonts.families.get_mut(&egui::FontFamily::Monospace) {
+                    family.push("cjk_font".to_string());
                 }
-
-                ctx.set_fonts(fonts);
-                return;
+                break;
             }
         }
+
+        // 다국어 유니코드 폰트 등록 (첫 번째로 찾은 폰트 사용)
+        for path in &unicode_font_paths {
+            if let Ok(font_data) = std::fs::read(path) {
+                fonts.font_data.insert(
+                    "unicode_font".to_string(),
+                    egui::FontData::from_owned(font_data),
+                );
+                if let Some(family) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
+                    family.push("unicode_font".to_string());
+                }
+                if let Some(family) = fonts.families.get_mut(&egui::FontFamily::Monospace) {
+                    family.push("unicode_font".to_string());
+                }
+                break;
+            }
+        }
+
+        ctx.set_fonts(fonts);
     }
 
     /// 백그라운드 스레드에서 디렉토리 스캔을 시작한다.
@@ -137,14 +154,12 @@ impl Mp3TagApp {
         self.is_loading = true;
         self.status_msg = "스캔 중...".to_string();
 
-        std::thread::spawn(move || {
-            match scanner::scan_directory(&dir) {
-                Ok(files) => {
-                    let _ = tx.send(BgResult::ScanDone(files));
-                }
-                Err(e) => {
-                    let _ = tx.send(BgResult::Error(format!("스캔 실패: {}", e)));
-                }
+        std::thread::spawn(move || match scanner::scan_directory(&dir) {
+            Ok(files) => {
+                let _ = tx.send(BgResult::ScanDone(files));
+            }
+            Err(e) => {
+                let _ = tx.send(BgResult::Error(format!("스캔 실패: {}", e)));
             }
         });
     }
@@ -206,10 +221,7 @@ impl Mp3TagApp {
                     self.edit_artist = tags.artist.clone().unwrap_or_default();
                     self.edit_album = tags.album.clone().unwrap_or_default();
                     self.edit_album_artist = tags.album_artist.clone().unwrap_or_default();
-                    self.edit_track = tags
-                        .track_number
-                        .map(|n| n.to_string())
-                        .unwrap_or_default();
+                    self.edit_track = tags.track_number.map(|n| n.to_string()).unwrap_or_default();
                     self.edit_year = tags.year.map(|y| y.to_string()).unwrap_or_default();
                     self.edit_genre = tags.genre.clone().unwrap_or_default();
 
@@ -362,8 +374,7 @@ impl Mp3TagApp {
                     self.search_results = results;
                     self.selected_result = None;
                     self.is_loading = false;
-                    self.status_msg =
-                        format!("검색 결과 {}건", self.search_results.len());
+                    self.status_msg = format!("검색 결과 {}건", self.search_results.len());
                 }
                 BgResult::AlbumArtDone(index, data) => {
                     // 검색 결과에 앨범 아트 저장
@@ -375,8 +386,7 @@ impl Mp3TagApp {
                         let rgba = img.to_rgba8();
                         let size = [rgba.width() as usize, rgba.height() as usize];
                         let pixels = rgba.into_raw();
-                        let color_image =
-                            ColorImage::from_rgba_unmultiplied(size, &pixels);
+                        let color_image = ColorImage::from_rgba_unmultiplied(size, &pixels);
                         let texture = ctx.load_texture(
                             format!("result_art_{}", index),
                             color_image,
@@ -515,10 +525,7 @@ impl eframe::App for Mp3TagApp {
                     ui.label("현재 앨범 아트:");
                     let size = texture.size_vec2();
                     let scale = (150.0 / size.x).min(150.0 / size.y).min(1.0);
-                    ui.image(egui::load::SizedTexture::new(
-                        texture.id(),
-                        size * scale,
-                    ));
+                    ui.image(egui::load::SizedTexture::new(texture.id(), size * scale));
                 }
 
                 ui.add_space(20.0);
@@ -530,8 +537,7 @@ impl eframe::App for Mp3TagApp {
                     ui.label("검색어:");
                     let response = ui.text_edit_singleline(&mut self.search_query);
                     if ui.button("검색").clicked()
-                        || (response.lost_focus()
-                            && ui.input(|i| i.key_pressed(egui::Key::Enter)))
+                        || (response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))
                     {
                         self.start_search();
                     }
@@ -547,18 +553,13 @@ impl eframe::App for Mp3TagApp {
                             if let Some(Some(texture)) = self.result_art_textures.get(i) {
                                 let size = texture.size_vec2();
                                 let scale = (48.0 / size.x).min(48.0 / size.y).min(1.0);
-                                ui.image(egui::load::SizedTexture::new(
-                                    texture.id(),
-                                    size * scale,
-                                ));
+                                ui.image(egui::load::SizedTexture::new(texture.id(), size * scale));
                             } else {
                                 ui.allocate_space(egui::vec2(48.0, 48.0));
                             }
 
                             ui.vertical(|ui| {
-                                ui.label(
-                                    egui::RichText::new(result.display_title()).strong(),
-                                );
+                                ui.label(egui::RichText::new(result.display_title()).strong());
                                 ui.label(format!(
                                     "{} - {}",
                                     result.display_artist(),
