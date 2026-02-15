@@ -1,6 +1,7 @@
 #[cfg(feature = "gui")]
 mod app;
 
+/// GUI 창을 실행한다. directory가 주어지면 해당 디렉토리를 자동으로 스캔한다.
 #[cfg(feature = "gui")]
 pub fn launch(directory: Option<std::path::PathBuf>) {
     let options = eframe::NativeOptions {

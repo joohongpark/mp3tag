@@ -5,6 +5,8 @@ use id3::{Tag, TagLike, Version};
 
 use crate::models::TrackInfo;
 
+/// MP3 파일에서 ID3 태그를 읽어 TrackInfo로 변환한다.
+/// 태그가 없거나 제목/아티스트/앨범이 모두 비어있으면 None을 반환한다.
 pub fn read_tags(path: &Path) -> Result<Option<TrackInfo>> {
     let tag = match Tag::read_from_path(path) {
         Ok(tag) => tag,
@@ -44,6 +46,8 @@ pub fn read_tags(path: &Path) -> Result<Option<TrackInfo>> {
     Ok(Some(info))
 }
 
+/// TrackInfo를 MP3 파일에 ID3v2.4 태그로 기록한다.
+/// 기존 태그가 있으면 지정된 필드만 덮어쓴다.
 pub fn write_tags(path: &Path, info: &TrackInfo) -> Result<()> {
     let mut tag = Tag::read_from_path(path).unwrap_or_else(|_| Tag::new());
 
@@ -82,6 +86,7 @@ pub fn write_tags(path: &Path, info: &TrackInfo) -> Result<()> {
     Ok(())
 }
 
+/// 기존 태그와 새 태그를 병합한다. 새 값이 있으면 우선 적용된다.
 pub fn merge_tags(existing: &Option<TrackInfo>, new_info: &TrackInfo) -> TrackInfo {
     match existing {
         Some(existing) => TrackInfo {
@@ -109,6 +114,7 @@ pub fn merge_tags(existing: &Option<TrackInfo>, new_info: &TrackInfo) -> TrackIn
     }
 }
 
+/// 이미지 바이너리의 매직 바이트로 MIME 타입을 판별한다.
 fn detect_mime_type(data: &[u8]) -> String {
     if data.starts_with(&[0x89, 0x50, 0x4E, 0x47]) {
         "image/png".to_string()

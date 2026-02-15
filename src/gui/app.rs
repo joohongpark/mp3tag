@@ -9,6 +9,7 @@ use crate::models::{Mp3File, TrackInfo};
 use crate::sources::spotify::SpotifyClient;
 use crate::sources::MusicSource;
 
+/// 백그라운드 스레드에서 GUI 스레드로 전달되는 결과.
 enum BgResult {
     ScanDone(Vec<Mp3File>),
     SearchDone(Vec<TrackInfo>),
@@ -16,13 +17,14 @@ enum BgResult {
     Error(String),
 }
 
+/// egui 기반 MP3 태그 편집기 앱.
 pub struct Mp3TagApp {
-    // File list
+    // 파일 목록
     dir_path: String,
     files: Vec<Mp3File>,
     selected_index: Option<usize>,
 
-    // Tag editing
+    // 태그 편집
     edit_title: String,
     edit_artist: String,
     edit_album: String,
@@ -31,16 +33,16 @@ pub struct Mp3TagApp {
     edit_year: String,
     edit_genre: String,
 
-    // Search
+    // 검색
     search_query: String,
     search_results: Vec<TrackInfo>,
     selected_result: Option<usize>,
 
-    // Album art
+    // 앨범 아트
     album_art_texture: Option<TextureHandle>,
     result_art_textures: Vec<Option<TextureHandle>>,
 
-    // Background tasks
+    // 백그라운드 작업
     tx: mpsc::Sender<BgResult>,
     rx: mpsc::Receiver<BgResult>,
     is_loading: bool,
@@ -48,6 +50,7 @@ pub struct Mp3TagApp {
 }
 
 impl Mp3TagApp {
+    /// 앱을 초기화한다. 한글 폰트를 로드하고, directory가 주어지면 스캔을 시작한다.
     pub fn new(cc: &eframe::CreationContext<'_>, directory: Option<PathBuf>) -> Self {
         Self::setup_korean_fonts(&cc.egui_ctx);
         let (tx, rx) = mpsc::channel();
@@ -86,6 +89,7 @@ impl Mp3TagApp {
         app
     }
 
+    /// 시스템에서 한글 폰트를 찾아 egui에 등록한다.
     fn setup_korean_fonts(ctx: &egui::Context) {
         let mut fonts = egui::FontDefinitions::default();
 
@@ -93,7 +97,7 @@ impl Mp3TagApp {
         let font_paths = [
             "/System/Library/Fonts/AppleSDGothicNeo.ttc",
             "/System/Library/Fonts/Supplemental/AppleGothic.ttf",
-            // Linux
+            // 리눅스
             "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
             "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
             "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
@@ -106,7 +110,7 @@ impl Mp3TagApp {
                     egui::FontData::from_owned(font_data),
                 );
 
-                // 기본 폰트 패밀리에 한글 폰트 추가 (기존 폰트 뒤에)
+                // 기본 폰트 패밀리에 한글 폰트 추가
                 if let Some(family) = fonts
                     .families
                     .get_mut(&egui::FontFamily::Proportional)
@@ -126,6 +130,7 @@ impl Mp3TagApp {
         }
     }
 
+    /// 백그라운드 스레드에서 디렉토리 스캔을 시작한다.
     fn start_scan(&mut self) {
         let dir = PathBuf::from(&self.dir_path);
         let tx = self.tx.clone();
@@ -144,6 +149,7 @@ impl Mp3TagApp {
         });
     }
 
+    /// 백그라운드 스레드에서 Spotify 검색을 시작한다.
     fn start_search(&mut self) {
         let query = self.search_query.clone();
         let tx = self.tx.clone();
@@ -168,6 +174,7 @@ impl Mp3TagApp {
         });
     }
 
+    /// 검색 결과의 앨범 아트를 백그라운드에서 다운로드한다.
     fn fetch_result_art(&self, index: usize, track: &TrackInfo) {
         let tx = self.tx.clone();
         let track = track.clone();
@@ -190,6 +197,7 @@ impl Mp3TagApp {
         });
     }
 
+    /// 선택된 파일의 태그 정보를 편집 필드에 로드한다.
     fn load_edit_fields(&mut self) {
         if let Some(idx) = self.selected_index {
             if let Some(file) = self.files.get(idx) {
@@ -205,14 +213,14 @@ impl Mp3TagApp {
                     self.edit_year = tags.year.map(|y| y.to_string()).unwrap_or_default();
                     self.edit_genre = tags.genre.clone().unwrap_or_default();
 
-                    // Build search query from current tags
+                    // 현재 태그로 검색 쿼리 생성
                     let query = parser::build_search_query(tags);
                     if !query.is_empty() {
                         self.search_query = query;
                     }
                     return;
                 }
-                // No tags — parse filename for search query
+                // 태그 없음 — 파일명에서 검색 쿼리 파싱
                 let parsed = parser::parse_filename(&file.path);
                 self.search_query = parser::build_search_query(&parsed);
                 self.edit_title = parsed.title.unwrap_or_default();
@@ -228,6 +236,7 @@ impl Mp3TagApp {
         self.clear_edit_fields();
     }
 
+    /// 모든 편집 필드를 초기화한다.
     fn clear_edit_fields(&mut self) {
         self.edit_title.clear();
         self.edit_artist.clear();
@@ -239,6 +248,7 @@ impl Mp3TagApp {
         self.search_query.clear();
     }
 
+    /// 편집 필드의 내용을 선택된 파일에 ID3 태그로 저장한다.
     fn save_current_tags(&mut self) {
         let Some(idx) = self.selected_index else {
             return;
@@ -272,6 +282,7 @@ impl Mp3TagApp {
         }
     }
 
+    /// 검색 결과를 선택된 파일에 적용하고 태그를 기록한다.
     fn apply_search_result(&mut self, result_idx: usize) {
         let Some(file_idx) = self.selected_index else {
             return;
@@ -293,7 +304,7 @@ impl Mp3TagApp {
         self.edit_year = track.year.map(|y| y.to_string()).unwrap_or_default();
         self.edit_genre = track.genre.clone().unwrap_or_default();
 
-        // Write tags including album art if we have it
+        // 앨범 아트를 포함하여 태그 기록
         if let Some(file) = self.files.get_mut(file_idx) {
             match tagger::write_tags(&file.path, &track) {
                 Ok(_) => {
@@ -308,6 +319,7 @@ impl Mp3TagApp {
         }
     }
 
+    /// 선택된 파일의 앨범 아트를 egui 텍스처로 로드한다.
     fn load_album_art_texture(&mut self, ctx: &egui::Context) {
         self.album_art_texture = None;
 
@@ -329,6 +341,7 @@ impl Mp3TagApp {
         }
     }
 
+    /// 백그라운드 스레드로부터 수신된 결과를 처리한다.
     fn process_bg_results(&mut self, ctx: &egui::Context) {
         while let Ok(result) = self.rx.try_recv() {
             match result {
@@ -339,7 +352,7 @@ impl Mp3TagApp {
                     self.status_msg = format!("MP3 파일 {}개를 찾았습니다", self.files.len());
                 }
                 BgResult::SearchDone(results) => {
-                    // Fetch album art for each result
+                    // 각 검색 결과의 앨범 아트 가져오기
                     for (i, track) in results.iter().enumerate() {
                         if track.album_art_url.is_some() {
                             self.fetch_result_art(i, track);
@@ -353,11 +366,11 @@ impl Mp3TagApp {
                         format!("검색 결과 {}건", self.search_results.len());
                 }
                 BgResult::AlbumArtDone(index, data) => {
-                    // Store art in search result
+                    // 검색 결과에 앨범 아트 저장
                     if let Some(track) = self.search_results.get_mut(index) {
                         track.album_art = Some(data.clone());
                     }
-                    // Create texture
+                    // 텍스처 생성
                     if let Ok(img) = image::load_from_memory(&data) {
                         let rgba = img.to_rgba8();
                         let size = [rgba.width() as usize, rgba.height() as usize];
@@ -387,7 +400,7 @@ impl eframe::App for Mp3TagApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.process_bg_results(ctx);
 
-        // Top panel: directory input
+        // 상단 패널: 디렉토리 입력
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.label("디렉토리:");
@@ -410,7 +423,7 @@ impl eframe::App for Mp3TagApp {
             });
         });
 
-        // Left panel: file list
+        // 좌측 패널: 파일 목록
         egui::SidePanel::left("file_panel")
             .default_width(300.0)
             .show(ctx, |ui| {
@@ -442,7 +455,7 @@ impl eframe::App for Mp3TagApp {
                 });
             });
 
-        // Central panel: tag editor + search
+        // 중앙 패널: 태그 편집기 + 검색
         egui::CentralPanel::default().show(ctx, |ui| {
             if self.selected_index.is_none() {
                 ui.centered_and_justified(|ui| {
@@ -452,7 +465,7 @@ impl eframe::App for Mp3TagApp {
             }
 
             egui::ScrollArea::vertical().show(ui, |ui| {
-                // Tag editor section
+                // 태그 편집 섹션
                 ui.heading("태그 편집기");
                 ui.separator();
 
@@ -496,7 +509,7 @@ impl eframe::App for Mp3TagApp {
                     }
                 });
 
-                // Album art preview
+                // 앨범 아트 미리보기
                 if let Some(ref texture) = self.album_art_texture {
                     ui.separator();
                     ui.label("현재 앨범 아트:");
@@ -511,7 +524,7 @@ impl eframe::App for Mp3TagApp {
                 ui.add_space(20.0);
                 ui.separator();
 
-                // Search section
+                // 검색 섹션
                 ui.heading("Spotify 검색");
                 ui.horizontal(|ui| {
                     ui.label("검색어:");
@@ -530,7 +543,7 @@ impl eframe::App for Mp3TagApp {
 
                     for (i, result) in self.search_results.iter().enumerate() {
                         ui.horizontal(|ui| {
-                            // Album art thumbnail
+                            // 앨범 아트 썸네일
                             if let Some(Some(texture)) = self.result_art_textures.get(i) {
                                 let size = texture.size_vec2();
                                 let scale = (48.0 / size.x).min(48.0 / size.y).min(1.0);
@@ -573,6 +586,7 @@ impl eframe::App for Mp3TagApp {
     }
 }
 
+/// 빈 문자열이면 None, 아니면 Some으로 반환한다.
 fn non_empty(s: &str) -> Option<String> {
     let trimmed = s.trim();
     if trimmed.is_empty() {

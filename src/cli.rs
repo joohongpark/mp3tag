@@ -63,6 +63,7 @@ pub enum Commands {
     Config,
 }
 
+/// CLI 명령어를 분기하여 실행한다.
 pub fn run(cli: Cli) -> Result<()> {
     match cli.command {
         Some(Commands::Scan { directory }) => cmd_scan(&directory),
@@ -111,6 +112,7 @@ pub fn run(cli: Cli) -> Result<()> {
     }
 }
 
+/// 디렉토리를 스캔하여 MP3 파일의 태그 현황을 테이블로 출력한다.
 fn cmd_scan(directory: &PathBuf) -> Result<()> {
     let files = scanner::scan_directory(directory)?;
 
@@ -153,6 +155,7 @@ fn cmd_scan(directory: &PathBuf) -> Result<()> {
     Ok(())
 }
 
+/// 지정된 필드를 MP3 파일의 ID3 태그에 기록한다.
 #[allow(clippy::too_many_arguments)]
 fn cmd_edit(
     file: &PathBuf,
@@ -193,6 +196,7 @@ fn cmd_edit(
     Ok(())
 }
 
+/// 태그가 없는 파일을 Spotify에서 검색하여 사용자 선택 후 적용한다.
 fn cmd_fetch(path: &PathBuf) -> Result<()> {
     let cfg = config::load_config();
 
@@ -255,7 +259,7 @@ fn cmd_fetch(path: &PathBuf) -> Result<()> {
 
         let mut track = results[selection].clone();
 
-        // Fetch album art
+        // 앨범 아트 가져오기
         match client.fetch_album_art(&track) {
             Ok(art) => {
                 track.album_art = Some(art);
@@ -274,6 +278,7 @@ fn cmd_fetch(path: &PathBuf) -> Result<()> {
     Ok(())
 }
 
+/// Spotify API 자격증명을 대화형으로 입력받아 저장한다.
 fn cmd_config() -> Result<()> {
     let mut cfg = config::load_config();
 

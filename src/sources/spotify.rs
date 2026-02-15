@@ -6,6 +6,8 @@ use crate::config::SpotifyConfig;
 use crate::models::TrackInfo;
 use crate::sources::MusicSource;
 
+/// Spotify Web API 클라이언트.
+/// Client Credentials Flow로 인증하여 검색 및 앨범 아트 다운로드를 수행한다.
 pub struct SpotifyClient {
     client: reqwest::blocking::Client,
     access_token: String,
@@ -53,6 +55,7 @@ struct SpotifyImage {
 }
 
 impl SpotifyClient {
+    /// 설정에서 자격증명을 읽어 인증 후 클라이언트를 생성한다.
     pub fn new(config: &SpotifyConfig) -> Result<Self> {
         let client_id = config
             .client_id
@@ -72,6 +75,7 @@ impl SpotifyClient {
         })
     }
 
+    /// Client Credentials Flow로 access token을 발급받는다.
     fn authenticate(
         client: &reqwest::blocking::Client,
         client_id: &str,
@@ -94,6 +98,7 @@ impl SpotifyClient {
         Ok(resp.access_token)
     }
 
+    /// 발매일 문자열에서 연도를 추출한다 (예: "2019-11-18" -> 2019).
     fn parse_year(release_date: &Option<String>) -> Option<i32> {
         release_date
             .as_ref()
@@ -101,6 +106,7 @@ impl SpotifyClient {
             .and_then(|y| y.parse().ok())
     }
 
+    /// Spotify API의 트랙 응답을 TrackInfo로 변환한다.
     fn convert_track(track: &SpotifyTrack) -> TrackInfo {
         let artist = track
             .artists
