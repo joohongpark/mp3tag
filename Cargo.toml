@@ -33,6 +33,9 @@ dialoguer = "0.11"
 # Base64 (Spotify auth)
 base64 = "0.22"
 
+# HTML parsing
+scraper = "0.22"
+
 # Error handling
 anyhow = "1"
 

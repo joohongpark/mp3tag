@@ -4,16 +4,24 @@ use std::sync::mpsc;
 use egui::{ColorImage, TextureHandle};
 
 use crate::config;
-use crate::core::{parser, scanner, tagger};
+use crate::core::{parser, renamer, scanner, tagger};
 use crate::models::{Mp3File, TrackInfo};
+use crate::sources::melon::MelonClient;
 use crate::sources::spotify::SpotifyClient;
 use crate::sources::MusicSource;
+
+/// 검색 소스 선택.
+#[derive(PartialEq, Clone, Copy)]
+enum SearchSource {
+    Spotify,
+    Melon,
+}
 
 /// 백그라운드 스레드에서 GUI 스레드로 전달되는 결과.
 enum BgResult {
     ScanDone(Vec<Mp3File>),
     SearchDone(Vec<TrackInfo>),
-    AlbumArtDone(usize, Vec<u8>),
+    DetailDone(usize, TrackInfo),
     Error(String),
 }
 
@@ -34,6 +42,7 @@ pub struct Mp3TagApp {
     edit_genre: String,
 
     // 검색
+    search_source: SearchSource,
     search_query: String,
     search_results: Vec<TrackInfo>,
     selected_result: Option<usize>,
@@ -71,6 +80,7 @@ impl Mp3TagApp {
             edit_track: String::new(),
             edit_year: String::new(),
             edit_genre: String::new(),
+            search_source: SearchSource::Spotify,
             search_query: String::new(),
             search_results: Vec::new(),
             selected_result: None,
@@ -164,18 +174,27 @@ impl Mp3TagApp {
         });
     }
 
-    /// 백그라운드 스레드에서 Spotify 검색을 시작한다.
+    /// 백그라운드 스레드에서 검색을 시작한다.
     fn start_search(&mut self) {
         let query = self.search_query.clone();
         let tx = self.tx.clone();
         let cfg = config::load_config();
+        let source = self.search_source;
         self.is_loading = true;
         self.status_msg = "검색 중...".to_string();
 
         std::thread::spawn(move || {
             let result = (|| -> anyhow::Result<Vec<TrackInfo>> {
-                let client = SpotifyClient::new(&cfg.spotify)?;
-                client.search(&query)
+                match source {
+                    SearchSource::Spotify => {
+                        let client = SpotifyClient::new(&cfg.spotify)?;
+                        client.search(&query)
+                    }
+                    SearchSource::Melon => {
+                        let client = MelonClient::new()?;
+                        client.search(&query)
+                    }
+                }
             })();
 
             match result {
@@ -189,24 +208,29 @@ impl Mp3TagApp {
         });
     }
 
-    /// 검색 결과의 앨범 아트를 백그라운드에서 다운로드한다.
-    fn fetch_result_art(&self, index: usize, track: &TrackInfo) {
+    /// 검색 결과의 상세 정보(메타데이터 + 앨범 아트)를 백그라운드에서 가져온다.
+    fn fetch_result_detail(&self, index: usize, track: &TrackInfo) {
         let tx = self.tx.clone();
         let track = track.clone();
         let cfg = config::load_config();
 
         std::thread::spawn(move || {
-            let result = (|| -> anyhow::Result<Vec<u8>> {
-                let client = SpotifyClient::new(&cfg.spotify)?;
-                client.fetch_album_art(&track)
+            let result = (|| -> anyhow::Result<TrackInfo> {
+                if track.source == "melon" {
+                    let client = MelonClient::new()?;
+                    client.fetch_detail(&track)
+                } else {
+                    let client = SpotifyClient::new(&cfg.spotify)?;
+                    client.fetch_detail(&track)
+                }
             })();
 
             match result {
-                Ok(data) => {
-                    let _ = tx.send(BgResult::AlbumArtDone(index, data));
+                Ok(detailed) => {
+                    let _ = tx.send(BgResult::DetailDone(index, detailed));
                 }
                 Err(e) => {
-                    let _ = tx.send(BgResult::Error(format!("앨범 아트 실패: {}", e)));
+                    let _ = tx.send(BgResult::Error(format!("상세 정보 실패: {}", e)));
                 }
             }
         });
@@ -294,6 +318,71 @@ impl Mp3TagApp {
         }
     }
 
+    /// 선택된 파일의 이름을 "{아티스트} - {제목}.mp3" 형식으로 변경한다.
+    fn rename_current_file(&mut self) {
+        let Some(idx) = self.selected_index else {
+            return;
+        };
+        let Some(file) = self.files.get_mut(idx) else {
+            return;
+        };
+        let Some(ref tags) = file.current_tags else {
+            self.status_msg = "태그 정보가 없어 파일명을 변경할 수 없습니다".to_string();
+            return;
+        };
+
+        match renamer::rename_file(&file.path, tags) {
+            Ok(new_path) => {
+                if new_path == file.path {
+                    self.status_msg = "파일명이 이미 동일합니다".to_string();
+                } else {
+                    self.status_msg = format!("파일명 변경: {}", new_path.display());
+                    file.path = new_path;
+                }
+            }
+            Err(e) => {
+                self.status_msg = format!("파일명 변경 실패: {}", e);
+            }
+        }
+    }
+
+    /// 모든 파일의 이름을 태그 기반으로 일괄 변경한다.
+    fn rename_all_files(&mut self) {
+        let mut success = 0;
+        let mut failed = 0;
+        let mut skipped = 0;
+
+        for file in &mut self.files {
+            let Some(ref tags) = file.current_tags else {
+                skipped += 1;
+                continue;
+            };
+            if tags.artist.is_none() || tags.title.is_none() {
+                skipped += 1;
+                continue;
+            }
+
+            match renamer::rename_file(&file.path, tags) {
+                Ok(new_path) => {
+                    if new_path == file.path {
+                        skipped += 1;
+                    } else {
+                        file.path = new_path;
+                        success += 1;
+                    }
+                }
+                Err(_) => {
+                    failed += 1;
+                }
+            }
+        }
+
+        self.status_msg = format!(
+            "파일명 변경 완료: 성공 {}건, 실패 {}건, 스킵 {}건",
+            success, failed, skipped
+        );
+    }
+
     /// 검색 결과를 선택된 파일에 적용하고 태그를 기록한다.
     fn apply_search_result(&mut self, result_idx: usize) {
         let Some(file_idx) = self.selected_index else {
@@ -318,11 +407,17 @@ impl Mp3TagApp {
 
         // 앨범 아트를 포함하여 태그 기록
         if let Some(file) = self.files.get_mut(file_idx) {
+            let source_name = match track.source.as_str() {
+                "melon" => "Melon",
+                "spotify" => "Spotify",
+                _ => &track.source,
+            }
+            .to_string();
             match tagger::write_tags(&file.path, &track) {
                 Ok(_) => {
                     file.current_tags = Some(track);
                     file.has_tags = true;
-                    self.status_msg = "Spotify에서 태그가 적용되었습니다!".to_string();
+                    self.status_msg = format!("{}에서 태그가 적용되었습니다!", source_name);
                 }
                 Err(e) => {
                     self.status_msg = format!("적용 실패: {}", e);
@@ -364,10 +459,10 @@ impl Mp3TagApp {
                     self.status_msg = format!("MP3 파일 {}개를 찾았습니다", self.files.len());
                 }
                 BgResult::SearchDone(results) => {
-                    // 각 검색 결과의 앨범 아트 가져오기
+                    // 각 검색 결과의 상세 정보 가져오기
                     for (i, track) in results.iter().enumerate() {
                         if track.album_art_url.is_some() {
-                            self.fetch_result_art(i, track);
+                            self.fetch_result_detail(i, track);
                         }
                     }
                     self.result_art_textures = vec![None; results.len()];
@@ -376,24 +471,26 @@ impl Mp3TagApp {
                     self.is_loading = false;
                     self.status_msg = format!("검색 결과 {}건", self.search_results.len());
                 }
-                BgResult::AlbumArtDone(index, data) => {
-                    // 검색 결과에 앨범 아트 저장
+                BgResult::DetailDone(index, detailed) => {
+                    // 검색 결과를 상세 정보로 갱신
                     if let Some(track) = self.search_results.get_mut(index) {
-                        track.album_art = Some(data.clone());
+                        *track = detailed;
                     }
-                    // 텍스처 생성
-                    if let Ok(img) = image::load_from_memory(&data) {
-                        let rgba = img.to_rgba8();
-                        let size = [rgba.width() as usize, rgba.height() as usize];
-                        let pixels = rgba.into_raw();
-                        let color_image = ColorImage::from_rgba_unmultiplied(size, &pixels);
-                        let texture = ctx.load_texture(
-                            format!("result_art_{}", index),
-                            color_image,
-                            Default::default(),
-                        );
-                        if index < self.result_art_textures.len() {
-                            self.result_art_textures[index] = Some(texture);
+                    // 앨범 아트 텍스처 생성
+                    if let Some(ref data) = self.search_results.get(index).and_then(|t| t.album_art.clone()) {
+                        if let Ok(img) = image::load_from_memory(data) {
+                            let rgba = img.to_rgba8();
+                            let size = [rgba.width() as usize, rgba.height() as usize];
+                            let pixels = rgba.into_raw();
+                            let color_image = ColorImage::from_rgba_unmultiplied(size, &pixels);
+                            let texture = ctx.load_texture(
+                                format!("result_art_{}", index),
+                                color_image,
+                                Default::default(),
+                            );
+                            if index < self.result_art_textures.len() {
+                                self.result_art_textures[index] = Some(texture);
+                            }
                         }
                     }
                 }
@@ -425,6 +522,9 @@ impl eframe::App for Mp3TagApp {
                     || (response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))
                 {
                     self.start_scan();
+                }
+                if ui.button("태그 기반으로 모든 파일명 변경").clicked() {
+                    self.rename_all_files();
                 }
                 if self.is_loading {
                     ui.spinner();
@@ -517,6 +617,9 @@ impl eframe::App for Mp3TagApp {
                         self.save_current_tags();
                         self.load_album_art_texture(ctx);
                     }
+                    if ui.button("파일명 변경").clicked() {
+                        self.rename_current_file();
+                    }
                 });
 
                 // 앨범 아트 미리보기
@@ -532,7 +635,19 @@ impl eframe::App for Mp3TagApp {
                 ui.separator();
 
                 // 검색 섹션
-                ui.heading("Spotify 검색");
+                ui.heading("온라인 검색");
+                ui.horizontal(|ui| {
+                    ui.label("소스:");
+                    egui::ComboBox::from_id_salt("search_source")
+                        .selected_text(match self.search_source {
+                            SearchSource::Spotify => "Spotify",
+                            SearchSource::Melon => "Melon",
+                        })
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut self.search_source, SearchSource::Spotify, "Spotify");
+                            ui.selectable_value(&mut self.search_source, SearchSource::Melon, "Melon");
+                        });
+                });
                 ui.horizontal(|ui| {
                     ui.label("검색어:");
                     let response = ui.text_edit_singleline(&mut self.search_query);
