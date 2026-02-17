@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::Result;
 
@@ -77,29 +77,4 @@ pub fn scan_path(path: &Path) -> Result<Vec<Mp3File>> {
     } else {
         Ok(vec![load_single_file(path)?])
     }
-}
-
-/// 디렉토리에서 MP3 파일 경로만 수집한다.
-pub fn find_mp3_files(dir: &Path) -> Result<Vec<PathBuf>> {
-    let mut paths = Vec::new();
-    collect_paths(dir, &mut paths)?;
-    paths.sort();
-    Ok(paths)
-}
-
-/// 디렉토리를 재귀 순회하며 MP3 파일 경로를 수집한다.
-fn collect_paths(dir: &Path, paths: &mut Vec<PathBuf>) -> Result<()> {
-    if !dir.is_dir() {
-        anyhow::bail!("{}은(는) 디렉토리가 아닙니다", dir.display());
-    }
-    for entry in std::fs::read_dir(dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.is_dir() {
-            collect_paths(&path, paths)?;
-        } else if is_mp3(&path) {
-            paths.push(path);
-        }
-    }
-    Ok(())
 }

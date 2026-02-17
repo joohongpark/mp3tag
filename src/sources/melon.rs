@@ -32,10 +32,6 @@ impl MelonClient {
 }
 
 impl MusicSource for MelonClient {
-    fn name(&self) -> &str {
-        "Melon"
-    }
-
     fn search(&self, query: &str) -> Result<Vec<TrackInfo>> {
         let url = format!(
             "https://www.melon.com/search/song/index.htm?q={}&section=&searchGnbYn=Y&kkoSpl=N&kkoDpType=",

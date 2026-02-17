@@ -138,10 +138,6 @@ impl SpotifyClient {
 }
 
 impl MusicSource for SpotifyClient {
-    fn name(&self) -> &str {
-        "Spotify"
-    }
-
     fn search(&self, query: &str) -> Result<Vec<TrackInfo>> {
         let resp: SearchResponse = self
             .client
